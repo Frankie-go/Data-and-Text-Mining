@@ -1,31 +1,67 @@
 # Data-and-Text-Mining
 
-Text Mining on Journal Abstracts (2000–2022)
+# 🌍 Disaster Impact Analysis using Machine Learning
 
-This project performs a comprehensive text mining analysis on 4385 article abstracts from three journals: Journal of the Operational Research Society, Health Systems, and Simulation Journal. It includes the following steps:
+## 📌 Project Overview
+This project analyzes historical disaster data (from UNDRR DesInventar) for 13 countries using a full ML pipeline: data cleaning, feature engineering, dimensionality reduction (PCA), regression, and classification.
 
-Preprocessing: Tokenization, cleaning, lowercasing, stop-word removal, stemming, and lemmatization.
+---
 
-Bag-of-Words & TF-IDF: Extracted top words and classified them into thematic categories.
+## 🧹 Data Processing
+- Cleaned records from 1995–2023 across 13 countries.
+- Removed outliers via scatter plot analysis.
+- Handled missing data using **missForest** (random forest imputation).
+- Log-transformed skewed columns like `Deaths` and `Injured`.
+- Created new engineered features: `Houses_Affected`, `Relocation`, and `Affected`.
 
-Topic Modeling (LDA): Identified three main research topics and tracked their trends over time.
+---
 
-Regression Analysis: Built a multiple linear regression model to predict citation counts, with 'views' as the strongest predictor.
+## 🔬 PCA (Principal Component Analysis)
+- Applied PCA to reduce dimensionality (from 13 to 4 PCs), explaining ~96% variance.
+- Used top 4 PCs for regression and classification tasks.
 
-Classification & Association Rules: Performed text-based journal classification and mined co-occurrence rules like {monte} => {carlo}.
+---
 
-Clustering (K-means): Grouped abstracts into 3 main clusters based on TF-IDF features.
+## 📈 Regression Modeling
+Two models to predict death counts:
+- **Linear Regression**  
+- **Random Forest Regression** (performed better due to capturing nonlinearities)
 
-Dimensionality Reduction (PCA): Visualized the data structure in 2D space.
+---
 
-📉 Key findings include:
+## 🤖 Classification Tasks
+Three classification tasks using:
+- **Random Forest**, **SVM**, **Neural Network**
+- Target variables:
+  - `Disaster Type` (Natural vs Human-Made)
+  - `Economic Status` (High, Medium, Low Developing)
+  - `Continent` (Africa, South America)
 
-Medical and health research increased over time.
+### 🔍 Results Summary
+| Task            | Best Model      | Accuracy |
+|-----------------|------------------|----------|
+| Continent       | Random Forest     | 94.26%   |
+| Economic Status | SVM               | 60.95%   |
+| Disaster Type   | Neural Network    | 49.67%   |
 
-Simulation and optimization topics remain consistent.
+---
 
-Citation prediction has high variance and weak fit.
+## 📊 Key Takeaways
+- PCA helped mitigate multicollinearity and reduce complexity.
+- Random forest models performed best overall.
+- Disaster impact correlates with economic status and geographic region.
+- ML can support disaster preparedness by revealing critical patterns.
 
-Classification accuracy reaches 87%, with category imbalances.
+---
 
-This project demonstrates the application of various NLP and data mining techniques for scientific literature analysis.
+## 🛠️ Tech Stack
+- **R**, **ggplot2**, **randomForest**, **caret**, **nnet**, **missForest**, **pheatmap**
+
+---
+
+## 📂 Structure
+- `Group4_1.R`: Data cleaning, PCA, regression
+- `Group4_2.R`: Feature engineering, classification, evaluation
+- `output_table.csv`: Cleaned dataset for modeling
+- `Model Performance Comparison.csv`: Accuracy of models
+
