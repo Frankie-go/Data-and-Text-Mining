@@ -1,0 +1,472 @@
+---
+title: "Final Group Coursework"
+output: html_notebook
+---
+
+
+```{r setup,include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+library(tidyverse)
+library(tidytext)
+library(SnowballC)  # For wordStem
+library(tm)         # For text mining
+library(topicmodels)# For LDA
+library(wordcloud)  # For word cloud
+library(cluster)    # For k-means
+library(factoextra) # For clustering visualization
+library(readxl)     # For reading Excel files
+library(caret)
+library(glmnet)
+```
+
+
+## Bag of Words and TF-IDF
+
+
+```{r}
+# read data
+data <- read_csv("journal_data.csv")
+data <- na.omit(data)
+
+# Text preprocessing
+corpus_data <- data %>%
+  unnest_tokens(word, abstract) %>%  # Participle
+  mutate(word = tolower(word)) %>%  # Lowercase
+  mutate(word = str_remove_all(word, "[[:punct:]]")) %>%  # Remove punctuation
+  filter(!word %in% stop_words$word) %>%  # Remove stop words
+  filter(str_detect(word, "[a-zA-Z]+$")) %>%  # Keep words containing only letters
+  filter(str_length(word) > 2) %>%  # Remove short words (length <= 2)
+  filter(!str_detect(word, "\\d")) %>%  # Remove words containing numbers
+  mutate(word = wordStem(word))  # Stemming
+
+# Count the occurrences of each word in different journals
+word_journal_count <- corpus_data %>%
+  distinct(word, journal) %>%  
+  group_by(word) %>%
+  summarise(journal_count = n()) %>%  
+  ungroup()
+
+# Filter out words that do not appear in all journals
+words_to_keep <- word_journal_count %>%
+  filter(journal_count < 3) %>%  # Only keep words that do not appear in all journals
+  pull(word)
+
+# Apply the results to the original dataset
+filtered_data <- corpus_data %>%
+  filter(word %in% words_to_keep)
+
+# Calculating TF-IDF
+tf_idf_scores <- filtered_data %>%
+  count(journal, year, word) %>%
+  bind_tf_idf(word, journal, n) 
+
+```
+
+```{r}
+# Visualization: Displaying top words by journal
+top_terms_by_journal <- tf_idf_scores %>%
+  group_by(journal) %>%
+  slice_max(tf_idf, n = 10) %>%
+  ungroup()
+
+# Draw a graph of journal top words
+ggplot(top_terms_by_journal, aes(reorder(word, tf_idf), tf_idf, fill = journal)) +
+  geom_col(show.legend = F) +
+  facet_wrap(~journal, scales = "free") +
+  coord_flip() +
+  labs(x = "vocabulary",
+       y = "tf-idf",
+       title = "Top TF-IDF words for each journal") +
+  theme_bw()
+```
+
+```{r fig.width=18,fig.height=12}
+# Analysis of vocabulary changes by year
+terms_by_year <- tf_idf_scores %>%
+  group_by(year, word) %>%
+  summarise(mean_tf_idf = mean(tf_idf)) %>%
+  slice_max(mean_tf_idf, n = 10)
+
+# Plotting Yearly Trends
+ggplot(terms_by_year, aes(reorder(word, mean_tf_idf), mean_tf_idf,fill = factor(year))) +
+  geom_col(show.legend = F) +
+  facet_wrap(~year, scales = "free",ncol = 6) +
+  coord_flip() +
+  labs(x = "vocabulary",
+       y = "Average tf-idf",
+       title = "The most important words of each year") +
+  theme_bw()
+ggsave("graph/TheMostImportantWordsofEachYear.jpeg", width = 10, height = 8, dpi = 300)
+```
+
+
+```{r}
+# Get the 30 most frequent words
+top_30_words <- tf_idf_scores %>%
+  group_by(word) %>%
+  summarize(total_tf_idf = sum(tf_idf)) %>%
+  arrange(desc(total_tf_idf)) %>%
+  head(30)
+
+# Wordcloud
+png("wordcloud_30.png", width=800, height=600)
+wordcloud(words = top_30_words$word, 
+          freq = top_30_words$total_tf_idf,
+          max.words = 30,
+          colors = brewer.pal(8, "Dark2"))
+dev.off()
+```
+
+
+## LDA
+
+```{r}
+# DTM
+dtm <- corpus_data %>%
+  count(journal, word) %>%
+  cast_dtm(document = journal, 
+          term = word, 
+          value = n)
+
+# Set the number of topics to 3 and run LDA
+set.seed(1234)  
+lda_model <- LDA(dtm, k = 3, 
+                 method = "Gibbs", 
+                 control = list(seed = 1234))
+
+# Extract topic-word distribution
+topics_words <- tidy(lda_model, matrix = "beta") %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>%  # n=10
+  ungroup()
+
+# Extracting document-topic distribution
+doc_topics <- tidy(lda_model, matrix = "gamma") %>%
+  spread(topic, gamma)
+
+# Visualizing topic-word distribution
+topic_plot <- ggplot(topics_words, 
+       aes(reorder(term, beta), beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~topic, scales = "free") +
+  coord_flip() +
+  labs(x = "vocabulary",
+       y = "Topic Probability",
+       title = "Keywords for each topic") +
+  theme_bw()
+
+topic_plot
+
+
+##ggsave("topic_distribution.png", topic_plot, width = 12, height = 8)
+
+# Analyze changes in topics over time
+topic_trends <- corpus_data %>%
+  group_by(year) %>%
+  mutate(total = n()) %>%
+  ungroup() %>%
+  inner_join(topics_words, by = c("word" = "term")) %>%
+  group_by(year, topic) %>%
+  summarise(topic_proportion = n()/mean(total)) %>%
+  ungroup()
+
+# Plotting trends of topics over time
+time_trend_plot <- ggplot(topic_trends, 
+       aes(x = year, y = topic_proportion, color = factor(topic))) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Years",
+       y = "Topic ratio",
+       color = "Topic",
+       title = "Trends in topics over time") +
+  theme_bw()
+
+time_trend_plot
+
+
+##ggsave("topic_trends.png", time_trend_plot, width = 10, height = 6)
+
+# Output keywords for each topic
+top_terms <- topics_words %>%
+  arrange(topic, -beta) %>%
+  group_by(topic) %>%
+  summarise(terms = paste(term, collapse = ", "))
+
+top_terms
+```
+
+
+## Regression
+
+```{r}
+doc_word_matrix <- corpus_data %>%
+  count(title, word) %>%  
+  bind_tf_idf(word, title, n)
+
+# Create features for each document
+document_features <- doc_word_matrix %>%
+  pivot_wider(
+    id_cols = title,
+    names_from = word,
+    values_from = tf_idf,
+    values_fill = 0
+  ) %>% 
+  select(-journal)
+
+# Calculate feature variance
+text_features <- document_features %>%
+  select(-title)
+variances <- apply(text_features, 2, var)
+top_features <- names(sort(variances, decreasing = TRUE))[1:100]
+
+regression_data <- document_features %>%
+  select(title, all_of(top_features)) %>%
+  left_join(
+    data %>% 
+      select(title, year, pages, views, citations) %>% 
+      mutate(pages = as.numeric(pages)),
+    by = "title"
+  ) %>%
+  select(-title) %>%
+  drop_na()
+
+# Split training set and test set
+set.seed(123)
+train_index <- createDataPartition(regression_data$citations, p = 0.8, list = FALSE)
+train_data <- regression_data[train_index, ]
+test_data <- regression_data[-train_index, ]
+
+
+ctrl <- trainControl(method = "cv", number = 5)
+model <- train(citations ~ .,
+              data = train_data,
+              method = "glmnet",
+              trControl = ctrl,
+              preProcess = c("center", "scale"))
+
+# Evaluating the Model
+predictions <- predict(model, newdata = test_data)
+test_results <- data.frame(
+  actual = test_data$citations,
+  predicted = predictions
+)
+
+rmse <- sqrt(mean((test_results$actual - test_results$predicted)^2))
+mae <- mean(abs(test_results$actual - test_results$predicted))
+r2 <- cor(test_results$actual, test_results$predicted)^2
+
+# Creating Performance Text
+performance_text <- sprintf("R² = %.3f\nRMSE = %.3f\nMAE = %.3f", r2, rmse, mae)
+
+
+# Visualizing prediction results
+ggplot(test_results, aes(x = actual, y = predicted)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  labs(x = "Actual Citations",
+       y = "Predicted Citations",
+       title = "Prediction Performance on Test Set",
+       subtitle = sprintf("R² = %.3f, RMSE = %.3f, MAE = %.3f", r2, rmse, mae)) +
+  theme_bw()
+
+
+#model
+# Get the regression coefficients of the model
+coefficients <- coef(model$finalModel, model$bestTune$lambda)  
+
+
+coeff_df <- as.data.frame(as.matrix(coefficients))
+names(coeff_df) <- "Coefficient"
+coeff_df <- tibble::rownames_to_column(coeff_df, var = "Variable")
+
+# print
+cat("The specific form of the regression model：\n")
+cat(sprintf("Citations = %.3f", coeff_df$Coefficient[1]))  
+
+for (i in 2:nrow(coeff_df)) {
+  cat(sprintf(" + %.3f * %s", coeff_df$Coefficient[i], coeff_df$Variable[i]))
+}
+cat("\n")
+
+```
+
+
+
+## Classification 
+
+```{r}
+classification_data <- document_features %>%
+  select(title, all_of(top_features)) %>%
+  left_join(
+    data %>% select(title, journal),
+    by = "title"
+  ) %>%
+  select(-title)
+
+#Split training set and test set
+set.seed(123)
+train_index <- createDataPartition(classification_data$journal, p = 0.8, list = FALSE)
+train_data <- classification_data[train_index, ]
+test_data <- classification_data[-train_index, ]
+
+#Training a Random Forest Model
+ctrl <- trainControl(method = "cv", 
+                    number = 5,
+                    savePredictions = TRUE)
+
+rf_model <- train(journal ~ .,
+                 data = train_data,
+                 method = "rf",
+                 trControl = ctrl)
+
+# Evaluating the Model
+predictions <- predict(rf_model, newdata = test_data)
+conf_matrix <- confusionMatrix(predictions, factor(test_data$journal))
+conf_matrix
+
+```
+
+
+#association
+
+```{r}
+
+install.packages("arules")      
+install.packages("arulesViz") 
+library(arules)
+library(arulesViz)
+# Data loading
+#file_path <- "journal_data.csv"  
+abstracts <- data$abstract
+abstracts <- tolower(abstracts)
+
+corpus <- Corpus(VectorSource(abstracts))
+corpus <- tm_map(corpus, removePunctuation)  
+corpus <- tm_map(corpus, removeWords, stopwords("en"))  
+corpus <- tm_map(corpus, stripWhitespace)  
+
+dtm <- DocumentTermMatrix(corpus)
+dtm <- removeSparseTerms(dtm, 0.99)  
+matrix <- as.matrix(dtm)
+
+# Convert to transaction format
+transactions <- as(matrix > 0, "transactions")
+
+# Frequent Itemset Mining
+frequent_itemsets <- apriori(transactions, parameter = list(support = 0.01, target = "frequent itemsets"))
+
+inspect(head(frequent_itemsets, 10))
+
+# Generate association rules
+rules <- apriori(transactions, parameter = list(support = 0.01, confidence = 0.5))
+rules <- sort(rules, by = "lift", decreasing = TRUE)
+
+# View association rules
+inspect(head(rules, 10))
+
+# Visualization
+library(arulesViz)
+plot(rules, method = "graph", control = list(type = "items"))
+
+
+```
+
+
+
+## Clustering
+
+```{r}
+library(cluster)
+library(factoextra)
+
+# Data Standardization
+scaled_data <- scale(text_features)
+
+# Determining the optimal number of clusters
+# Use the Elbow Rule
+set.seed(123)
+wss <- sapply(1:10, function(k) {
+  kmeans(scaled_data, centers = k, nstart = 25)$tot.withinss
+})
+```
+
+
+```{r}
+# Plotting the Elbow
+elbow_plot <- fviz_nbclust(scaled_data, kmeans, method = "wss") +
+  labs(title = "Optimal Number of Clusters") +
+  theme_bw()
+
+elbow_plot
+```
+
+```{r}
+k <- 3
+set.seed(123)
+km_result <- kmeans(scaled_data, centers = k, nstart = 25)
+
+# Add cluster labels to the original data
+clustered_data <- document_features %>%
+  mutate(cluster = factor(km_result$cluster))
+
+# Analyze the characteristics of each cluster
+cluster_features <- list()
+
+for(i in 1:k) {
+  # Get the data of the current cluster
+  cluster_docs <- clustered_data %>%
+    filter(cluster == i) %>%
+    select(-title, -cluster)
+  
+  # Calculate the average TF-IDF value
+  avg_tfidf <- colMeans(cluster_docs)
+  
+  # Get the top 10 feature words
+  top_words <- sort(avg_tfidf, decreasing = TRUE)[1:10]
+  
+  cluster_features[[i]] <- data.frame(
+    cluster = i,
+    word = names(top_words),
+    avg_tfidf = as.numeric(top_words)
+  )
+}
+
+# Merge the feature words of all clusters
+all_cluster_features <- bind_rows(cluster_features)
+
+# Visualize the characteristic words of each cluster
+cluster_words_plot <- ggplot(all_cluster_features, 
+       aes(x = reorder(word, avg_tfidf), y = avg_tfidf)) +
+  geom_col() +
+  facet_wrap(~cluster, scales = "free_y") +
+  coord_flip() +
+  labs(title = "Top Words in Each Cluster",
+       x = "Words",
+       y = "Average TF-IDF") +
+  theme_bw()
+
+cluster_words_plot
+```
+
+## PCA
+
+```{r}
+pca_result <- prcomp(scaled_data,center = T,scale. = T)
+pca_data <- as.data.frame(pca_result$x[, 1:2])
+pca_data$cluster <- factor(km_result$cluster)
+
+# Cluster visualization
+cluster_plot <- ggplot(pca_data, aes(PC1, PC2, color = cluster)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "Document Clusters (PCA)",
+       x = "First Principal Component",
+       y = "Second Principal Component") +
+  theme_bw()
+
+cluster_plot
+```
+
