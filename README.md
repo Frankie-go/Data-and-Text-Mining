@@ -25,18 +25,3 @@ Forecasts environmental variables using classical and regression-based time seri
 5. **Visualization**  
    - Generated trend plots, forecast charts, and residual diagnostics for interpretability.
 
-**Usage**  
-```bash
-# Clone the repo
-git clone https://github.com/Frankie-go/Data-and-Text-Mining.git
-
-# Navigate to project folder
-cd Data-and-Text-Mining/time_series_forecasting
-
-# Install dependencies (e.g., via conda/pip)
-pip install -r requirements.txt
-
-# Run forecasting script
-python forecast.py --data_path data/environmental_data.csv --output_path results/forecasts.png
-
-
